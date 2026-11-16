@@ -286,6 +286,16 @@ function statusLeavesPlaying() {
   const tied = step(armed, [], BOMB_TIMER_MS);
   assert.equal(tied.status, "draw");
 
+  const alone = createMatch({
+    seed: 1,
+    now: 0,
+    zone: false,
+    fillBots: false,
+    humans: [{ id: "p1", name: "Ty", color: "blue" }],
+  });
+  assert.equal(alone.actors.length, 1);
+  assert.equal(step(alone, [], 50).status, "playing");
+
   let multi = createMatch({
     seed: 1,
     now: 0,
@@ -531,15 +541,41 @@ async function protocol() {
       2000,
     );
     assert.equal(lobby.actors.length, 1);
+    assert.equal(lobby.fillBots, false);
     host.send({ type: "restart" });
     const started = await until(
       host,
       (message) => message.type === "state" && message.status === "playing",
       2000,
     );
-    assert.equal(started.actors.length, 4);
+    assert.equal(started.actors.length, 1);
+    assert.equal(started.actors[0].kind, "player");
     assert.ok(started.zone);
     assert.equal(typeof started.zone.radius, "number");
+
+    const withBots = await connect(`ws://127.0.0.1:${server.port}`);
+    sockets.push(withBots);
+    withBots.send({
+      type: "create",
+      nick: "Ola",
+      zone: false,
+      fillBots: true,
+      lobby: true,
+    });
+    await withBots.next();
+    const waiting = await until(
+      withBots,
+      (message) => message.type === "state" && message.status === "lobby",
+      2000,
+    );
+    assert.equal(waiting.fillBots, true);
+    withBots.send({ type: "restart" });
+    const filled = await until(
+      withBots,
+      (message) => message.type === "state" && message.status === "playing",
+      2000,
+    );
+    assert.equal(filled.actors.filter((actor) => actor.kind === "bot").length, 3);
   } finally {
     for (const socket of sockets) {
       socket.ws.close();

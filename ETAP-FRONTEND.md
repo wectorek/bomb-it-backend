@@ -28,10 +28,10 @@ Klient → serwer:
 
 | Typ | Treść |
 |---|---|
-| `create` | `{ nick, zone, fillBots }`. Solo: `fillBots: true`. Pokój z kodem: `fillBots: false`. `zone` jest opcją pokoju, nie przełącznikiem w trakcie rundy. |
+| `create` | `{ nick, zone, fillBots, lobby }`. Solo: `fillBots: true` i od razu start. Pokój: `lobby: true`, a `fillBots` mówi, czy Start obsadzi puste fotele. Domyślnie boty są wyłączone. `zone` jest opcją pokoju, nie przełącznikiem w trakcie rundy. |
 | `join` | `{ code, nick }`. Kod jest bez znaczenia wielkości liter. |
 | `input` | `{ direction: { row, col } \| null, action: "bomb" \| null, seq }` |
-| `restart` | Nowa runda w tym samym pokoju. W lobby ta sama wiadomość **zaczyna** pierwszą rundę i puste fotele obsadza botami. `start` jest tym samym typem. |
+| `restart` | Nowa runda w tym samym pokoju. W lobby ta sama wiadomość **zaczyna** pierwszą rundę. Puste fotele dostają boty tylko wtedy, gdy pokój powstał z `fillBots: true`. `start` jest tym samym typem. |
 | `leave` | |
 
 Serwer → klient:
@@ -77,7 +77,7 @@ Czego w snapshocie nie ma i nie wolno odtwarzać lokalnie: typu bonusu na ziemi,
 
 `until` toastów i wybuchów oraz `diedAt` są w czasie serwera. Zegar lokalny: `serverNow + (Date.now() - receivedAt)`. Od tego liczyć zniknięcie ognia, toastu i `msLeft`. Nie porównywać `until` wprost z `Date.now()`.
 
-`zone.radius` jest w polach planszy. Piksele burzy: `radius * (ARENA_SIZE / BOARD_SIZE)`. Nie kopiować `safeRadius`. Przy włączonej strefie snapshot przychodzi co 50 ms, więc promień się rusza. W lobby `zone` jest `null` — opcja jest już zapisana w pokoju, widać ją od startu rundy.
+`zone.radius` to bezpieczna połówka w polach (odległość Czebyszewa od środka planszy). Szerokość fioletowego pierścienia liczy widok: `(7 - radius) * (ARENA_SIZE / BOARD_SIZE)`. Nie kopiować tempa kurczenia. Przy włączonej strefie snapshot przychodzi co 50 ms. W lobby `zone` jest `null` — opcja jest już zapisana w pokoju, widać ją od startu rundy.
 
 Obramowanie nie jedzie w snapshocie. Zostaje rysunkiem krawędzi 15×15 przy Arenie. Kolizji z ramką klient nie liczy.
 
@@ -121,7 +121,7 @@ Sprawdzenie przy `next dev` i `npm start`:
 
 ## Etap 4 — drugi człowiek
 
-Ten sam protokół. „Pokój” robi `create` z `fillBots: false` i pokazuje `welcome.code`. Drugie urządzenie w tym Wi-Fi otwiera front po adresie LAN (`http://192.168.x.x:3000`) i wysyła `join`. W lobby widać ludzi (`status: "lobby"`, puste pozycje). `restart` (albo `start`) zaczyna rundę: wolne fotele z czterech dostają boty. Pełne cztery fotele to runda bez botów.
+Ten sam protokół. „Pokój” robi `create` z `lobby: true` i pokazuje `welcome.code`. Przycisk obok „Utwórz pokój” ustawia `fillBots`; domyślnie jest wyłączony. Drugie urządzenie w tym Wi-Fi otwiera front po adresie LAN (`http://192.168.x.x:3000`) i wysyła `join`. W lobby widać ludzi (`status: "lobby"`, puste pozycje). `restart` (albo `start`) zaczyna rundę. Wolne fotele dostają boty tylko przy włączonym `fillBots`. Pełne cztery fotele to runda bez botów niezależnie od przycisku.
 
 Każdy dostaje swój `status`. Ostatni żywy człowiek wygrywa, pozostali przegrywają, wspólna śmierć w jednym momencie to remis, boty nie wygrywają. Ekran końcowy nie powtarza tej reguły. `gameStats.survivorSummary` dziś traktuje każdego `kind: "player"` jak „ty” — przy dwóch ludziach zdanie o ocalałych trzeba oprzeć o `you` i `status`, nie o „jest jakiś żywy człowiek”.
 

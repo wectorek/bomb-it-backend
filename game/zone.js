@@ -1,38 +1,34 @@
 import { BOARD_SIZE, ZONE_CELL_MS, ZONE_DAMAGE_MS } from "./config.js";
 
-function boardCenter(boardSize) {
-  return boardSize / 2;
+function boardCenterIndex(boardSize) {
+  return Math.floor((boardSize - 1) / 2);
 }
 
-export function initialSafeRadius(boardSize = BOARD_SIZE) {
-  const mid = boardCenter(boardSize);
-  return Math.hypot(mid - 0.5, mid - 0.5) + 0.35;
+// Na starcie cały kwadrat planszy jest bezpieczny. Co ZONE_CELL_MS odpada jeden pierścień.
+export function safeHalf(elapsedMs, boardSize = BOARD_SIZE) {
+  const closed = Math.floor(Math.max(0, elapsedMs) / ZONE_CELL_MS);
+  return boardCenterIndex(boardSize) - closed;
 }
 
-export function safeRadius(elapsedMs, boardSize = BOARD_SIZE) {
-  const shrunk = Math.max(0, elapsedMs) / ZONE_CELL_MS;
-  return Math.max(0, initialSafeRadius(boardSize) - shrunk);
-}
-
-export function isOutsideSafe(position, radius, boardSize = BOARD_SIZE) {
+export function isOutsideSafe(position, half, boardSize = BOARD_SIZE) {
   if (!position) {
     return false;
   }
-  const mid = boardCenter(boardSize);
-  const distance = Math.hypot(
-    position.row + 0.5 - mid,
-    position.col + 0.5 - mid,
+  const center = boardCenterIndex(boardSize);
+  const distance = Math.max(
+    Math.abs(position.row - center),
+    Math.abs(position.col - center),
   );
-  return distance > radius;
+  return distance > half;
 }
 
 // Co pełne 5 sekund w burzy zabiera jedno życie. Wyjście zeruje licznik.
 // Jedno wywołanie zadaje co najwyżej jedno obrażenie, tak jak tick 50 ms.
-export function applyZoneDamage(actors, radius, now, sinceMap = {}) {
+export function applyZoneDamage(actors, half, now, sinceMap = {}) {
   const since = { ...sinceMap };
   let actorsChanged = false;
   const next = actors.map((actor) => {
-    if (!actor.alive || !actor.position || !isOutsideSafe(actor.position, radius)) {
+    if (!actor.alive || !actor.position || !isOutsideSafe(actor.position, half)) {
       if (Object.hasOwn(since, actor.id)) {
         delete since[actor.id];
       }

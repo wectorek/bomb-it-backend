@@ -4,6 +4,9 @@ export function soloStatus(human, bots) {
   if (!human) {
     return "playing";
   }
+  if (bots.length === 0) {
+    return human.alive ? "playing" : "lose";
+  }
   const anyBotAlive = bots.some((bot) => bot.alive);
   if (human.alive && !anyBotAlive) {
     return "win";

@@ -113,6 +113,7 @@ function lobbySnapshot(room, you, now) {
     startedAt: null,
     serverNow: now,
     zone: null,
+    fillBots: room.fillBots === true,
     actors: room.seats.map((seat) => ({
       id: seat.id,
       kind: "player",
@@ -206,7 +207,7 @@ function beginMatch(room, now) {
   room.state = createMatch({
     zone: room.zone,
     humans,
-    fillBots: true,
+    fillBots: room.fillBots === true,
     seed: hashSeed(`${room.code}:${room.round}:${now}`),
     now,
   });
@@ -333,6 +334,7 @@ function onCreate(conn, message, now) {
   const room = {
     code,
     zone: Boolean(message.zone),
+    fillBots: message.fillBots === true,
     seats: [],
     nextSeat: 1,
     roster: null,
@@ -346,7 +348,7 @@ function onCreate(conn, message, now) {
   const seat = addHuman(room, cleanNick(message.nick));
   bind(room, conn, seat.id);
   welcome(conn);
-  if (message.fillBots === true) {
+  if (message.fillBots === true && message.lobby !== true) {
     beginMatch(room, now);
     return;
   }

@@ -33,7 +33,7 @@ import {
 } from "./playerMovement.js";
 import { createRandom } from "./rng.js";
 import { judge } from "./status.js";
-import { applyZoneDamage, safeRadius } from "./zone.js";
+import { applyZoneDamage, safeHalf } from "./zone.js";
 
 function takeId(state) {
   const id = state.nextId;
@@ -365,8 +365,8 @@ export function step(state, inputs = [], now) {
   }
 
   if (next.zone) {
-    const radius = safeRadius(Math.max(0, now - next.zone.startedAt));
-    const zoned = applyZoneDamage(next.actors, radius, now, next.zoneSince);
+    const half = safeHalf(Math.max(0, now - next.zone.startedAt));
+    const zoned = applyZoneDamage(next.actors, half, now, next.zoneSince);
     next.actors = zoned.actors;
     next.zoneSince = zoned.since;
   }

@@ -1,7 +1,7 @@
 import { moveIntervalFor } from "./actors.js";
 import { effectsForView } from "./bonus.js";
 import { viewerStatus } from "./status.js";
-import { safeRadius } from "./zone.js";
+import { safeHalf } from "./zone.js";
 
 function actorView(actor, now) {
   const view = {
@@ -42,7 +42,7 @@ export function snapshot(state, { roomId, you, now }) {
     zone: state.zone
       ? {
           startedAt: state.zone.startedAt,
-          radius: safeRadius(Math.max(0, now - state.zone.startedAt)),
+          radius: safeHalf(Math.max(0, now - state.zone.startedAt)),
         }
       : null,
     actors: state.actors.map((actor) => actorView(actor, now)),
