@@ -15,6 +15,7 @@ import {
 } from "./game/config.js";
 import { hashSeed } from "./game/rng.js";
 import { snapshot } from "./game/snapshot.js";
+import { isFrozen } from "./game/modes.js";
 import { step } from "./game/step.js";
 import { unitDirection } from "./game/playerMovement.js";
 
@@ -33,6 +34,42 @@ export function cleanNick(nick) {
   }
   const trimmed = nick.replace(/\s+/g, " ").trim().slice(0, 16);
   return trimmed || "Ty";
+}
+
+export function cleanChat(text) {
+  if (typeof text !== "string") {
+    return "";
+  }
+  const trimmed = text.replace(/[\r\n]+/g, " ").trim().slice(0, 80);
+  return trimmed;
+}
+
+function roomExtras(room) {
+  return {
+    chat: room.chat ?? [],
+    sessionWins: room.sessionWins ?? {},
+    sessionScores: room.sessionScores ?? {},
+  };
+}
+
+function recordSessionResults(room, state) {
+  if (!state?.outcomes || state.status === "playing") {
+    return;
+  }
+  room.sessionWins ??= {};
+  room.sessionScores ??= {};
+  const mode = state.modeEffective ?? "classic";
+  for (const [id, result] of Object.entries(state.outcomes)) {
+    if (result === "win") {
+      room.sessionWins[id] = (room.sessionWins[id] ?? 0) + 1;
+    }
+  }
+  if (mode === "hill") {
+    for (const actor of state.actors ?? []) {
+      room.sessionScores[actor.id] =
+        (room.sessionScores[actor.id] ?? 0) + (actor.score ?? 0);
+    }
+  }
 }
 
 export function noteInput(conn, message) {
@@ -137,10 +174,16 @@ function lobbySnapshot(room, you, now) {
 }
 
 function broadcast(room, now) {
+  const extras = roomExtras(room);
   for (const conn of room.conns) {
     const body = room.state
-      ? snapshot(room.state, { roomId: room.code, you: conn.you, now })
-      : lobbySnapshot(room, conn.you, now);
+      ? snapshot(room.state, {
+          roomId: room.code,
+          you: conn.you,
+          now,
+          roomExtras: extras,
+        })
+      : { ...lobbySnapshot(room, conn.you, now), chat: extras.chat };
     send(conn, {
       type: "state",
       ...body,
@@ -148,11 +191,13 @@ function broadcast(room, now) {
       ready: [...room.ready],
       fillBots: room.fillBots === true,
       settings: room.settings,
+      sessionWins: extras.sessionWins,
+      sessionScores: extras.sessionScores,
     });
   }
 }
 
-function pullInput(room, actorId) {
+function pullInput(room, actorId, state, now) {
   const conns = room.conns.filter((conn) => conn.you === actorId);
   const chosen = conns[conns.length - 1] ?? null;
   let action = null;
@@ -160,12 +205,17 @@ function pullInput(room, actorId) {
     if (conn.pendingAction) {
       action = conn.pendingAction;
     }
-    conn.pendingAction = null;
+  }
+  const frozen = state ? isFrozen(state, now) : false;
+  if (action && !frozen) {
+    for (const conn of conns) {
+      conn.pendingAction = null;
+    }
   }
   return {
     actorId,
-    direction: chosen?.direction ?? null,
-    action,
+    direction: frozen ? null : (chosen?.direction ?? null),
+    action: frozen ? null : action,
   };
 }
 
@@ -180,14 +230,17 @@ function tick(room, now) {
 
   const inputs = room.state.actors
     .filter((actor) => actor.kind === "player")
-    .map((actor) => pullInput(room, actor.id));
+    .map((actor) => pullInput(room, actor.id, room.state, now));
   const next = step(room.state, inputs, now);
   const changed = JSON.stringify(next) !== JSON.stringify(room.state);
   room.state = next;
-  if (changed || next.zone) {
+  const inCountdown =
+    next.countdownUntil != null && now < next.countdownUntil;
+  if (changed || next.zone || inCountdown) {
     broadcast(room, now);
   }
   if (next.status !== "playing") {
+    recordSessionResults(room, next);
     stopTick(room);
     if (room.conns.length === 0) {
       scheduleExpiry(room);
@@ -392,6 +445,9 @@ function onCreate(conn, message, now) {
     timer: null,
     expire: null,
     round: 0,
+    chat: [],
+    sessionWins: {},
+    sessionScores: {},
   };
   rooms.set(code, room);
   const seat = addHuman(room, cleanNick(message.nick), message.color);
@@ -507,6 +563,31 @@ function onInput(conn, message) {
   noteInput(conn, message);
 }
 
+function onChat(conn, message, now) {
+  const room = conn.room;
+  if (!room || !conn.you) {
+    return;
+  }
+  const text = cleanChat(message.text);
+  if (!text) {
+    return;
+  }
+  const actor =
+    room.state?.actors?.find((item) => item.id === conn.you) ??
+    room.seats.find((item) => item.id === conn.you);
+  room.chat = room.chat ?? [];
+  room.chat.push({
+    id: `${now}-${room.chat.length}`,
+    from: conn.you,
+    name: actor?.name ?? cleanNick(message.nick),
+    text,
+  });
+  if (room.chat.length > 8) {
+    room.chat = room.chat.slice(-8);
+  }
+  broadcast(room, now);
+}
+
 function onLeave(conn, now) {
   leave(conn, now);
   try {
@@ -536,6 +617,8 @@ function handleMessage(conn, message, now) {
     onRestart(conn, now);
   } else if (message.type === "leave") {
     onLeave(conn, now);
+  } else if (message.type === "chat") {
+    onChat(conn, message, now);
   }
 }
 

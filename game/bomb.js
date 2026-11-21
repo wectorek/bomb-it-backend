@@ -95,7 +95,23 @@ export function getGrenadeTarget(
   return null;
 }
 
-export function getExplosionCells(origin, walls, borders, range = BOMB_RANGE) {
+export function getExplosionCells(
+  origin,
+  walls,
+  borders,
+  range = BOMB_RANGE,
+  shape = "cross",
+) {
+  if (shape === "square") {
+    const dr = renderBorder(origin.row + 1, origin.col, borders) ? -1 : 1;
+    const dc = renderBorder(origin.row, origin.col + 1, borders) ? -1 : 1;
+    return [
+      { row: origin.row, col: origin.col },
+      { row: origin.row, col: origin.col + dc },
+      { row: origin.row + dr, col: origin.col },
+      { row: origin.row + dr, col: origin.col + dc },
+    ];
+  }
   const cells = [{ row: origin.row, col: origin.col }];
 
   for (const direction of DIRECTIONS) {
@@ -139,8 +155,9 @@ export function resolveExplosionOutcome({
   range = bombPosition?.range ?? BOMB_RANGE,
   now = 0,
   owner = bombPosition?.owner ?? null,
+  shape = "cross",
 }) {
-  const cells = getExplosionCells(bombPosition, walls, borders, range);
+  const cells = getExplosionCells(bombPosition, walls, borders, range, shape);
   const destroyedWalls = walls.filter(
     (wall) => wall.type !== "solid" && isInExplosion(wall, cells),
   );

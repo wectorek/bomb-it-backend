@@ -507,7 +507,7 @@ async function protocol() {
       (message) =>
         message.type === "state" &&
         message.bombs.some((bomb) => !knownBombs.has(bomb.id)),
-      2000,
+      6000,
     );
     const bombId = armed.bombs.find((bomb) => !knownBombs.has(bomb.id)).id;
     const blown = await until(

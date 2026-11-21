@@ -14,6 +14,7 @@ import {
   spawnBonusesFromWalls,
   survivingBonuses,
 } from "./bonus.js";
+import { damageFor } from "./bonus.js";
 import { resolveExplosionOutcome, getGrenadeTarget, isBombAt, ownsBomb } from "./bomb.js";
 import { nextBotTurn } from "./bot.js";
 import {
@@ -31,9 +32,18 @@ import {
   facingFromDirection,
   isPlayerStepBlocked,
 } from "./playerMovement.js";
+import {
+  isFrozen,
+  judgeMatch,
+  tickHillScoring,
+  zoneCellMs,
+} from "./modes.js";
 import { createRandom } from "./rng.js";
-import { judge } from "./status.js";
 import { applyZoneDamage, safeHalf } from "./zone.js";
+
+const FINALE_DROP_FALL_MS = 1200;
+const MESS_SLOW_MULTIPLIER = 2.5;
+const FINALE_DROP_EVERY_MS = 700;
 
 function takeId(state) {
   const id = state.nextId;
@@ -130,6 +140,9 @@ function releaseCharge(state, actor, now) {
 }
 
 function applyHuman(state, actorId, input, now) {
+  if (isFrozen(state, now)) {
+    return;
+  }
   if (!input) {
     return;
   }
@@ -166,15 +179,33 @@ function applyHuman(state, actorId, input, now) {
 
   state.actors = updateActor(state.actors, actorId, {
     position: nextCell,
-    nextMoveAt: now + moveIntervalFor(actor, now, state.settings),
+    nextMoveAt: now + stepDelay(state, actor, nextCell, now),
   });
 }
 
+// Wejście w zasrane pole spowalnia ruch.
+function stepDelay(state, actor, cell, now) {
+  const base = moveIntervalFor(actor, now, state.settings);
+  const messy = cell && (state.mess ?? []).some(
+    (spot) => spot.row === cell.row && spot.col === cell.col,
+  );
+  return messy ? Math.round(base * MESS_SLOW_MULTIPLIER) : base;
+}
+
 function applyBot(state, actorId, now, random) {
+  if (isFrozen(state, now)) {
+    return;
+  }
   const actor = getActor(state.actors, actorId);
   if (!actor?.alive || !actor.position || now < actor.nextMoveAt) {
     return;
   }
+
+  const cellMs = zoneCellMs(state.settings);
+  const half =
+    state.zone != null
+      ? safeHalf(Math.max(0, now - state.zone.startedAt), undefined, cellMs)
+      : null;
 
   const turn = nextBotTurn(
     actor.position,
@@ -190,6 +221,11 @@ function applyBot(state, actorId, now, random) {
       others: aliveActors(state.actors)
         .filter((other) => other.id !== actor.id && other.position)
         .map((other) => other.position),
+      botDifficulty: state.settings?.botDifficulty ?? "normal",
+      drops: state.drops ?? [],
+      mess: state.mess ?? [],
+      zoneHalf: half,
+      now,
     },
     random,
   );
@@ -210,7 +246,7 @@ function applyBot(state, actorId, now, random) {
     direction: turn.direction
       ? { row: turn.direction.row, col: turn.direction.col }
       : null,
-    nextMoveAt: now + moveIntervalFor(actor, now, state.settings),
+    nextMoveAt: now + stepDelay(state, actor, turn.position, now),
   };
   if (effects) {
     patch.effects = effects;
@@ -248,6 +284,7 @@ function explodeOne(state, bomb, random) {
     range: bomb.range,
     now: at,
     owner: bomb.owner,
+    shape: state.finale ? "square" : "cross",
   });
 
   const kept = survivingBonuses(state.bonuses, outcome.cells);
@@ -298,6 +335,70 @@ function explodeDueBombs(state, now, random) {
     }
     explodeOne(state, due[0], random);
   }
+}
+
+// Finał: z góry spadają kawałki, które po wylądowaniu ranią stojących na polu.
+function runFinaleDrops(state, now, random) {
+  const size = state.borders ? Math.max(...state.borders.map((b) => b.col)) : 14;
+  const alive = state.actors.filter((actor) => actor.alive && actor.position);
+
+  if (now >= (state.nextDropAt ?? 0)) {
+    const count = Math.max(1, alive.length);
+    for (let i = 0; i < count; i += 1) {
+      let cell;
+      if (alive.length > 0 && random() < 0.5) {
+        const target = alive[Math.floor(random() * alive.length)];
+        cell = { row: target.position.row, col: target.position.col };
+      } else {
+        cell = {
+          row: 1 + Math.floor(random() * (size - 1)),
+          col: 1 + Math.floor(random() * (size - 1)),
+        };
+      }
+      state.drops.push({
+        id: takeId(state),
+        row: cell.row,
+        col: cell.col,
+        at: now,
+        landAt: now + FINALE_DROP_FALL_MS,
+      });
+    }
+    state.nextDropAt = now + FINALE_DROP_EVERY_MS;
+  }
+
+  const landed = state.drops.filter((drop) => drop.landAt <= now);
+  if (landed.length === 0) {
+    return;
+  }
+  state.drops = state.drops.filter((drop) => drop.landAt > now);
+  for (const drop of landed) {
+    if (!state.mess.some((s) => s.row === drop.row && s.col === drop.col)) {
+      state.mess.push({ row: drop.row, col: drop.col });
+    }
+  }
+  state.actors = state.actors.map((actor) => {
+    if (!actor.alive || !actor.position) {
+      return actor;
+    }
+    const hits = landed.filter(
+      (drop) => drop.row === actor.position.row && drop.col === actor.position.col,
+    ).length;
+    if (hits === 0) {
+      return actor;
+    }
+    const damage = damageFor(actor, now) * hits;
+    if (damage <= 0) {
+      return actor;
+    }
+    const lives = Math.max(0, actor.lives - damage);
+    const aliveNow = lives > 0;
+    return {
+      ...actor,
+      lives,
+      alive: aliveNow,
+      ...(!aliveNow && actor.diedAt == null ? { diedAt: now } : {}),
+    };
+  });
 }
 
 function regrowHedges(state, now) {
@@ -378,17 +479,55 @@ export function step(state, inputs = [], now) {
     });
   }
 
+  if (next.modeEffective === "hill") {
+    const hill = tickHillScoring(next, now);
+    if (hill) {
+      next.actors = hill.actors;
+      next.hillTickSince = hill.hillTickSince;
+    }
+  }
+
   if (next.zone) {
-    const half = safeHalf(Math.max(0, now - next.zone.startedAt));
+    const half = safeHalf(
+      Math.max(0, now - next.zone.startedAt),
+      undefined,
+      zoneCellMs(next.settings),
+    );
     const zoned = applyZoneDamage(next.actors, half, now, next.zoneSince);
     next.actors = zoned.actors;
     next.zoneSince = zoned.since;
   }
 
-  const outcome = judge(next.actors);
+  if (
+    !next.finale &&
+    typeof next.finaleStartsAt === "number" &&
+    now >= next.finaleStartsAt
+  ) {
+    next.finale = { startedAt: now };
+    next.drops = [];
+    next.mess = [];
+    next.nextDropAt = now + 800;
+    next.walls = [];
+    next.hedges = [];
+    next.bonuses = [];
+    next.toasts.push({
+      id: takeId(next),
+      text: "Rozwolnienie!",
+      until: now + TOAST_MS * 2,
+    });
+  }
+
+  if (next.finale) {
+    runFinaleDrops(next, now, random);
+  }
+
+  const outcome = judgeMatch(next, now);
   if (outcome.status !== "playing") {
     next.status = outcome.status;
     next.outcomes = outcome.outcomes;
+    if (outcome.winningTeam != null) {
+      next.winningTeam = outcome.winningTeam;
+    }
   }
 
   next.rng = rng.state;

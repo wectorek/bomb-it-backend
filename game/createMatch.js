@@ -10,6 +10,12 @@ import { createMapBorder } from "./border.js";
 import { BOARD_SIZE, SEAT_COLORS, SEAT_COUNT } from "./config.js";
 import { generateMaze } from "./maze.js";
 import { createRandom } from "./rng.js";
+import {
+  COUNTDOWN_MS,
+  effectiveMode,
+  hillCells,
+  teamForSeatIndex,
+} from "./modes.js";
 import { normalizeSettings } from "./settings.js";
 
 export function createMatch({
@@ -86,21 +92,54 @@ export function createMatch({
       facing: "down",
       nextMoveAt: 0,
     });
-    if (seat.kind === "bot") {
-      actor.nextMoveAt = now + moveIntervalFor(actor, now, settings);
-    }
+    actor.score = 0;
     return actor;
   });
+
+  const countdownUntil = now > 0 ? now + COUNTDOWN_MS : null;
+  for (const actor of actors) {
+    if (countdownUntil != null) {
+      actor.nextMoveAt = countdownUntil;
+      continue;
+    }
+    actor.nextMoveAt =
+      actor.kind === "bot"
+        ? now + moveIntervalFor(actor, now, settings)
+        : now;
+  }
+
+  const modeEffective = effectiveMode(settings.mode, actors.length);
+  if (modeEffective === "teams") {
+    for (let index = 0; index < actors.length; index += 1) {
+      actors[index].team = teamForSeatIndex(index);
+    }
+  }
+
+  const finaleAfterSec = settings.finaleAfterSec ?? 0;
+  const finaleStartsAt =
+    finaleAfterSec > 0
+      ? (countdownUntil ?? now) + finaleAfterSec * 1000
+      : null;
 
   return {
     status: "playing",
     outcomes: {},
     startedAt: now,
+    countdownUntil,
+    modeEffective,
+    modeRequested: settings.mode ?? "classic",
+    finaleStartsAt,
+    hillCells: modeEffective === "hill" ? hillCells(BOARD_SIZE) : null,
+    hillTickSince: {},
     rng: box.state,
     nextId: 1,
     settings,
+    finale: null,
+    startActors: actors.length,
     zone: zone || settings.zone ? { startedAt: now } : null,
     zoneSince: {},
+    drops: [],
+    mess: [],
     borders,
     walls,
     actors,

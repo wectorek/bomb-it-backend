@@ -2,6 +2,7 @@ import { renderBorder } from "./border.js";
 import { BOMB_RANGE, BOT_ENGAGE_DISTANCE } from "./config.js";
 import { getExplosionCells, getGrenadeTarget, isBombAt, isInExplosion } from "./bomb.js";
 import { renderWall, checkCollision } from "./maze.js";
+import { isHazardPosition, isZoneThreat } from "./modes.js";
 import { facingFromDirection } from "./playerMovement.js";
 
 const DIRECTIONS = [
@@ -43,18 +44,103 @@ function requireRandom(random) {
   return random;
 }
 
-export function pickOpenDirection(position, walls, borders, bomb, random) {
+function buildHazardInfo(options) {
+  if (!options) {
+    return null;
+  }
+  const difficulty = options.botDifficulty ?? "normal";
+  const hazards = [];
+  const now = options.now ?? 0;
+  for (const drop of options.drops ?? []) {
+    if (drop.landAt > now) {
+      hazards.push({ row: drop.row, col: drop.col, kind: "drop" });
+    }
+  }
+  for (const spot of options.mess ?? []) {
+    hazards.push({ row: spot.row, col: spot.col, kind: "mess" });
+  }
+  if (hazards.length === 0 && options.zoneHalf == null) {
+    return { hazards: [], half: null, boardSize: 15, botDifficulty: difficulty };
+  }
+  return {
+    hazards,
+    half: options.zoneHalf ?? null,
+    boardSize: 15,
+    botDifficulty: difficulty,
+  };
+}
+
+function cellIsRisky(next, hazardInfo, random) {
+  if (!hazardInfo) {
+    return false;
+  }
+  const { hazards, half, boardSize, botDifficulty } = hazardInfo;
+  const difficulty = botDifficulty ?? "normal";
+  const drops = hazards.filter((cell) => cell.kind === "drop");
+  const mess = hazards.filter((cell) => cell.kind === "mess");
+
+  if (isHazardPosition(next, drops)) {
+    if (difficulty === "easy" && random() < 0.45) {
+      return false;
+    }
+    if (difficulty === "normal" && random() < 0.12) {
+      return false;
+    }
+    return true;
+  }
+  if (isHazardPosition(next, mess)) {
+    if (difficulty === "easy" && random() < 0.4) {
+      return false;
+    }
+    if (difficulty === "normal" && random() < 0.2) {
+      return false;
+    }
+    return true;
+  }
+  if (half != null && isZoneThreat(next, half, boardSize)) {
+    if (difficulty === "easy" && random() < 0.35) {
+      return false;
+    }
+    if (difficulty === "hard") {
+      return true;
+    }
+    return random() > 0.08;
+  }
+  return false;
+}
+
+function filterHazardMoves(position, openDirections, hazardInfo, random) {
+  if (!hazardInfo || openDirections.length === 0) {
+    return openDirections;
+  }
+  const safe = openDirections.filter(
+    (dir) => !cellIsRisky(step(position, dir), hazardInfo, random),
+  );
+  return safe.length > 0 ? safe : openDirections;
+}
+
+export function pickOpenDirection(position, walls, borders, bomb, random, hazardInfo = null) {
   const roll = requireRandom(random);
-  const openDirections = getOpenDirections(position, walls, borders, bomb);
+  let openDirections = getOpenDirections(position, walls, borders, bomb);
+  openDirections = filterHazardMoves(position, openDirections, hazardInfo, roll);
   if (openDirections.length === 0) {
     return null;
   }
   return openDirections[Math.floor(roll() * openDirections.length)];
 }
 
-export function nextBotMove(position, direction, walls, borders, bomb, random) {
+export function nextBotMove(
+  position,
+  direction,
+  walls,
+  borders,
+  bomb,
+  random,
+  hazardInfo = null,
+) {
   const roll = requireRandom(random);
-  const openDirections = getOpenDirections(position, walls, borders, bomb);
+  let openDirections = getOpenDirections(position, walls, borders, bomb);
+  openDirections = filterHazardMoves(position, openDirections, hazardInfo, roll);
   const isIntersection = openDirections.length > 2;
 
   let currentDirection;
@@ -160,6 +246,7 @@ export function nextBotTurn(
   random,
 ) {
   const roll = requireRandom(random);
+  const hazardInfo = buildHazardInfo(options);
   const hasGrenade = Boolean(options.hasGrenade);
   const throwFacing = direction
     ? facingFromDirection(direction)
@@ -236,16 +323,25 @@ export function nextBotTurn(
   if (threats.length === 0) {
     return {
       ...turn,
-      ...nextBotMove(position, direction, walls, borders, bombsForMove, roll),
+      ...nextBotMove(
+        position,
+        direction,
+        walls,
+        borders,
+        bombsForMove,
+        roll,
+        hazardInfo,
+      ),
     };
   }
 
-  const openDirections = getOpenDirections(
+  let openDirections = getOpenDirections(
     position,
     walls,
     borders,
     bombsForMove,
   );
+  openDirections = filterHazardMoves(position, openDirections, hazardInfo, roll);
   const here = Math.min(...threats.map((bomb) => manhattan(position, bomb)));
   const away = openDirections.filter((dir) => {
     const next = step(position, dir);

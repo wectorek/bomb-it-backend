@@ -21,6 +21,12 @@ const DURATION_IDS = ["immunity", "speed", "range", "slow", "fragile", "freeze"]
 
 export const DEFAULT_SETTINGS = Object.freeze({
   zone: false,
+  finale: false,
+  finaleAfterSec: 0,
+  mode: "classic",
+  botDifficulty: "normal",
+  zoneCellSec: 20,
+  hillPoints: 10,
   playerSpeed: 1,
   wallDensity: 1,
   hedgeRegrowSec: HEDGE_REGROW_MS / 1000,
@@ -37,6 +43,27 @@ export const DEFAULT_SETTINGS = Object.freeze({
   }),
   enabledBonuses: Object.freeze(Object.fromEntries(BONUS_IDS.map((id) => [id, true]))),
 });
+
+const MODES = new Set(["classic", "teams", "hill"]);
+const BOT_LEVELS = new Set(["easy", "normal", "hard"]);
+
+function pickEnum(value, allowed, fallback) {
+  return allowed.has(value) ? value : fallback;
+}
+
+function finaleDelaySec(input, defaults) {
+  if (input.finaleAfterSec != null) {
+    const seconds = Math.round(num(input.finaleAfterSec, 0, 0, 600));
+    if (seconds === 0) {
+      return 0;
+    }
+    return Math.max(30, seconds);
+  }
+  if (input.finale === true) {
+    return defaults.finaleAfterSec > 0 ? defaults.finaleAfterSec : 120;
+  }
+  return 0;
+}
 
 function num(value, fallback, min, max) {
   const n = Number(value);
@@ -57,8 +84,15 @@ export function normalizeSettings(raw) {
   for (const id of BONUS_IDS) {
     enabledBonuses[id] = input.enabledBonuses?.[id] !== false;
   }
+  const finaleAfterSec = finaleDelaySec(input, d);
   return {
     zone: input.zone === true,
+    finale: finaleAfterSec > 0,
+    finaleAfterSec,
+    mode: pickEnum(input.mode === "points" ? "classic" : input.mode, MODES, d.mode),
+    botDifficulty: pickEnum(input.botDifficulty, BOT_LEVELS, d.botDifficulty),
+    zoneCellSec: Math.round(num(input.zoneCellSec, d.zoneCellSec, 5, 60)),
+    hillPoints: Math.round(num(input.hillPoints, d.hillPoints, 3, 50)),
     playerSpeed: num(input.playerSpeed, d.playerSpeed, 0.5, 2.5),
     wallDensity: num(input.wallDensity, d.wallDensity, 0.1, 2),
     hedgeRegrowSec: num(input.hedgeRegrowSec, d.hedgeRegrowSec, 1, 60),

@@ -4,9 +4,13 @@ function boardCenterIndex(boardSize) {
   return Math.floor((boardSize - 1) / 2);
 }
 
-// Na starcie cały kwadrat planszy jest bezpieczny. Co ZONE_CELL_MS odpada jeden pierścień.
-export function safeHalf(elapsedMs, boardSize = BOARD_SIZE) {
-  const closed = Math.floor(Math.max(0, elapsedMs) / ZONE_CELL_MS);
+// Na starcie cały kwadrat planszy jest bezpieczny. Co zoneCellMs odpada jeden pierścień.
+export function safeHalf(
+  elapsedMs,
+  boardSize = BOARD_SIZE,
+  zoneCellMs = ZONE_CELL_MS,
+) {
+  const closed = Math.floor(Math.max(0, elapsedMs) / zoneCellMs);
   return boardCenterIndex(boardSize) - closed;
 }
 
