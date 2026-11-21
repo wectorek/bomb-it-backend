@@ -9,6 +9,7 @@ import {
   STARTING_LIVES,
 } from "./config.js";
 import { renderWall } from "./maze.js";
+import { DEFAULT_SETTINGS } from "./settings.js";
 import { soloStatus } from "./status.js";
 
 export const PLAYER_START = { row: 1, col: 8 };
@@ -239,15 +240,17 @@ export function aliveActors(actors) {
   return actors.filter((actor) => actor.alive);
 }
 
-export function moveIntervalFor(actor, now) {
+export function moveIntervalFor(actor, now, settings = DEFAULT_SETTINGS) {
   const base =
-    actor?.kind === "player" ? PLAYER_MOVE_INTERVAL_MS : BOT_MOVE_INTERVAL_MS;
+    actor?.kind === "player"
+      ? PLAYER_MOVE_INTERVAL_MS / settings.playerSpeed
+      : BOT_MOVE_INTERVAL_MS;
   let multiplier = 1;
   if (hasEffect(actor, "speed", now)) {
-    multiplier *= SPEED_MULTIPLIER;
+    multiplier *= settings.speedMultiplier;
   }
   if (hasEffect(actor, "slow", now)) {
-    multiplier *= SLOW_MULTIPLIER;
+    multiplier *= settings.slowMultiplier;
   }
   return Math.max(1, Math.round(base * multiplier));
 }

@@ -3,7 +3,7 @@ import { effectsForView } from "./bonus.js";
 import { viewerStatus } from "./status.js";
 import { safeHalf } from "./zone.js";
 
-function actorView(actor, now) {
+function actorView(actor, now, settings) {
   const view = {
     id: actor.id,
     kind: actor.kind,
@@ -15,7 +15,7 @@ function actorView(actor, now) {
     facing: actor.facing,
     lives: actor.lives,
     alive: actor.alive,
-    moveIntervalMs: moveIntervalFor(actor, now),
+    moveIntervalMs: moveIntervalFor(actor, now, settings),
     effects: effectsForView(actor, now),
     stats: {
       wallsDestroyed: actor.stats?.wallsDestroyed ?? 0,
@@ -45,7 +45,7 @@ export function snapshot(state, { roomId, you, now }) {
           radius: safeHalf(Math.max(0, now - state.zone.startedAt)),
         }
       : null,
-    actors: state.actors.map((actor) => actorView(actor, now)),
+    actors: state.actors.map((actor) => actorView(actor, now, state.settings)),
     walls: state.walls.map((wall) => ({
       row: wall.row,
       col: wall.col,

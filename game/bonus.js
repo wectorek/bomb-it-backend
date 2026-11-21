@@ -7,6 +7,7 @@ import {
   NEGATIVE_BONUS_CHANCE,
   RANGE_BONUS,
 } from "./config.js";
+import { DEFAULT_SETTINGS } from "./settings.js";
 
 export const POSITIVE_BONUS_TYPES = ["immunity", "speed", "range", "grenade"];
 export const NEGATIVE_BONUS_TYPES = ["slow", "fragile", "freeze"];
@@ -53,19 +54,24 @@ export function isNegativeBonus(type) {
   return NEGATIVE_BONUS_TYPES.includes(type);
 }
 
-export function rollBonusType(random) {
+export function rollBonusType(random, settings = DEFAULT_SETTINGS) {
   if (typeof random !== "function") {
     throw new Error("rollBonusType wymaga generatora random");
   }
-  if (random() < NEGATIVE_BONUS_CHANCE) {
-    const index = Math.floor(random() * NEGATIVE_BONUS_TYPES.length);
-    return NEGATIVE_BONUS_TYPES[
-      Math.min(index, NEGATIVE_BONUS_TYPES.length - 1)
-    ];
+  const on = (type) => settings.enabledBonuses?.[type] !== false;
+  const positive = POSITIVE_BONUS_TYPES.filter(on);
+  const negative = NEGATIVE_BONUS_TYPES.filter(on);
+  if (positive.length === 0 && negative.length === 0) {
+    return null;
+  }
+  const roll = random();
+  if (negative.length > 0 && (positive.length === 0 || roll < NEGATIVE_BONUS_CHANCE)) {
+    const index = Math.floor(random() * negative.length);
+    return negative[Math.min(index, negative.length - 1)];
   }
 
-  const index = Math.floor(random() * POSITIVE_BONUS_TYPES.length);
-  return POSITIVE_BONUS_TYPES[Math.min(index, POSITIVE_BONUS_TYPES.length - 1)];
+  const index = Math.floor(random() * positive.length);
+  return positive[Math.min(index, positive.length - 1)];
 }
 
 export function bonusToastText(type, actorName) {
@@ -76,7 +82,12 @@ export function bonusToastText(type, actorName) {
   return `${actorName}: ${label}`;
 }
 
-export function spawnBonusesFromWalls(destroyedWalls, random, now) {
+export function spawnBonusesFromWalls(
+  destroyedWalls,
+  random,
+  now,
+  settings = DEFAULT_SETTINGS,
+) {
   if (typeof random !== "function") {
     throw new Error("spawnBonusesFromWalls wymaga generatora random");
   }
@@ -87,10 +98,14 @@ export function spawnBonusesFromWalls(destroyedWalls, random, now) {
       continue;
     }
 
+    const type = rollBonusType(random, settings);
+    if (!type) {
+      continue;
+    }
     const bonus = {
       row: wall.row,
       col: wall.col,
-      type: rollBonusType(random),
+      type,
     };
 
     if (BONUS_LIFETIME_MS != null) {
@@ -156,13 +171,16 @@ function withoutOpposites(effects, type) {
   return next;
 }
 
-export function applyBonus(actor, type, now) {
+export function applyBonus(actor, type, now, settings = DEFAULT_SETTINGS) {
+  const durationMs =
+    (settings.durationsSec?.[type] ?? DEFAULT_SETTINGS.durationsSec[type] ?? 10) *
+    1000;
   const hadFreeze = Boolean(actor.effects?.freeze);
   const effects = withoutOpposites(actor.effects ?? {}, type);
   let nextMoveAt = actor.nextMoveAt ?? 0;
 
   if (type === "freeze") {
-    nextMoveAt = Math.max(nextMoveAt, now + FREEZE_DURATION_MS);
+    nextMoveAt = Math.max(nextMoveAt, now + durationMs);
   } else if (hadFreeze && (OPPOSITES[type] ?? []).includes("freeze")) {
     nextMoveAt = now;
   }
@@ -174,7 +192,7 @@ export function applyBonus(actor, type, now) {
     return { ...actor, effects: { ...effects, grenade: {} }, nextMoveAt };
   }
 
-  const duration = type === "freeze" ? FREEZE_DURATION_MS : BONUS_DURATION_MS;
+  const duration = durationMs;
   return {
     ...actor,
     nextMoveAt,
@@ -252,14 +270,19 @@ export function damageFor(actor, now) {
   return 1;
 }
 
-export function rangeFor(actor, now) {
+export function rangeFor(actor, now, settings = DEFAULT_SETTINGS) {
   if (hasEffect(actor, "range", now)) {
-    return BOMB_RANGE + RANGE_BONUS;
+    return BOMB_RANGE + settings.rangeBonus;
   }
   return BOMB_RANGE;
 }
 
-export function collectBonuses(actors, bonuses, now) {
+export function collectBonuses(
+  actors,
+  bonuses,
+  now,
+  settings = DEFAULT_SETTINGS,
+) {
   if (!bonuses.length) {
     return { actors, bonuses, collected: [] };
   }
@@ -290,6 +313,7 @@ export function collectBonuses(actors, bonuses, now) {
         withCollectedStat(updated, bonus.type),
         bonus.type,
         now,
+        settings,
       );
       collected.push({
         id: bonus.id,

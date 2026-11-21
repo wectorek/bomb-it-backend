@@ -72,7 +72,7 @@ function plantBomb(state, actor, now) {
     row: actor.position.row,
     col: actor.position.col,
     owner: actor.id,
-    range: rangeFor(actor, now),
+    range: rangeFor(actor, now, state.settings),
     kind: "bomb",
     airborne: false,
     from: null,
@@ -166,7 +166,7 @@ function applyHuman(state, actorId, input, now) {
 
   state.actors = updateActor(state.actors, actorId, {
     position: nextCell,
-    nextMoveAt: now + moveIntervalFor(actor, now),
+    nextMoveAt: now + moveIntervalFor(actor, now, state.settings),
   });
 }
 
@@ -183,7 +183,7 @@ function applyBot(state, actorId, now, random) {
     state.borders,
     state.bombs,
     actor.id,
-    rangeFor(actor, now),
+    rangeFor(actor, now, state.settings),
     {
       hasGrenade: hasEffect(actor, "grenade", now),
       facing: actor.facing,
@@ -210,7 +210,7 @@ function applyBot(state, actorId, now, random) {
     direction: turn.direction
       ? { row: turn.direction.row, col: turn.direction.col }
       : null,
-    nextMoveAt: now + moveIntervalFor(actor, now),
+    nextMoveAt: now + moveIntervalFor(actor, now, state.settings),
   };
   if (effects) {
     patch.effects = effects;
@@ -251,7 +251,12 @@ function explodeOne(state, bomb, random) {
   });
 
   const kept = survivingBonuses(state.bonuses, outcome.cells);
-  const spawned = spawnBonusesFromWalls(outcome.destroyedWalls, random, at).map(
+  const spawned = spawnBonusesFromWalls(
+    outcome.destroyedWalls,
+    random,
+    at,
+    state.settings,
+  ).map(
     (bonus) => ({ ...bonus, id: takeId(state) }),
   );
   state.bonuses =
@@ -264,7 +269,11 @@ function explodeOne(state, bomb, random) {
       state.hedges.push({
         row: wall.row,
         col: wall.col,
-        regrowAt: at + HEDGE_REGROW_MS,
+        regrowAt:
+          at +
+          (state.settings?.hedgeRegrowSec != null
+            ? state.settings.hedgeRegrowSec * 1000
+            : HEDGE_REGROW_MS),
       });
     }
   }
@@ -353,7 +362,12 @@ export function step(state, inputs = [], now) {
     applyBot(next, actorId, now, random);
   }
 
-  const pickup = collectBonuses(next.actors, next.bonuses, now);
+  const pickup = collectBonuses(
+    next.actors,
+    next.bonuses,
+    now,
+    next.settings,
+  );
   next.actors = pickup.actors;
   next.bonuses = pruneBonuses(pickup.bonuses, now);
   for (const item of pickup.collected) {

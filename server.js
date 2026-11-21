@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { initialStats } from "./game/actors.js";
 import { createMatch } from "./game/createMatch.js";
+import { normalizeSettings } from "./game/settings.js";
 import {
   GAME_TICK_MS,
   PLAYER_MOVE_INTERVAL_MS,
@@ -206,8 +207,10 @@ function beginMatch(room, now) {
   room.round += 1;
   room.state = createMatch({
     zone: room.zone,
+    settings: room.settings,
     humans,
     fillBots: room.fillBots === true,
+    botCount: room.botCount,
     seed: hashSeed(`${room.code}:${room.round}:${now}`),
     now,
   });
@@ -229,12 +232,13 @@ function beginMatch(room, now) {
   broadcast(room, now);
 }
 
-function addHuman(room, name) {
+function addHuman(room, name, wanted) {
   if (room.seats.length >= SEAT_COUNT) {
     return null;
   }
   const used = new Set(room.seats.map((seat) => seat.color));
   const color =
+    (SEAT_COLORS.includes(wanted) && !used.has(wanted) ? wanted : null) ??
     SEAT_COLORS.find((entry) => !used.has(entry)) ??
     SEAT_COLORS[room.seats.length % SEAT_COLORS.length];
   const seat = {
@@ -333,8 +337,15 @@ function onCreate(conn, message, now) {
   const code = makeCode();
   const room = {
     code,
-    zone: Boolean(message.zone),
+    zone: Boolean(message.zone || message.settings?.zone),
+    settings: normalizeSettings({
+      ...message.settings,
+      zone: Boolean(message.zone || message.settings?.zone),
+    }),
     fillBots: message.fillBots === true,
+    botCount: Number.isInteger(message.botCount)
+      ? Math.min(3, Math.max(1, message.botCount))
+      : null,
     seats: [],
     nextSeat: 1,
     roster: null,
@@ -345,7 +356,7 @@ function onCreate(conn, message, now) {
     round: 0,
   };
   rooms.set(code, room);
-  const seat = addHuman(room, cleanNick(message.nick));
+  const seat = addHuman(room, cleanNick(message.nick), message.color);
   bind(room, conn, seat.id);
   welcome(conn);
   if (message.fillBots === true && message.lobby !== true) {
@@ -371,6 +382,17 @@ function onJoin(conn, message, now) {
   leave(conn, now);
   bind(room, conn, you);
   welcome(conn);
+  broadcast(room, now);
+}
+
+function onSettings(conn, message, now) {
+  const room = conn.room;
+  if (!room || room.state || room.seats[0]?.id !== conn.you) {
+    return;
+  }
+  if (typeof message.fillBots === "boolean") {
+    room.fillBots = message.fillBots;
+  }
   broadcast(room, now);
 }
 
@@ -408,6 +430,8 @@ function handleMessage(conn, message, now) {
     onJoin(conn, message, now);
   } else if (message.type === "input") {
     onInput(conn, message);
+  } else if (message.type === "settings") {
+    onSettings(conn, message, now);
   } else if (message.type === "restart" || message.type === "start") {
     onRestart(conn, now);
   } else if (message.type === "leave") {

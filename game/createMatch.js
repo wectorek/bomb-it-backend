@@ -10,11 +10,14 @@ import { createMapBorder } from "./border.js";
 import { BOARD_SIZE, SEAT_COLORS, SEAT_COUNT } from "./config.js";
 import { generateMaze } from "./maze.js";
 import { createRandom } from "./rng.js";
+import { normalizeSettings } from "./settings.js";
 
 export function createMatch({
   zone = false,
   humans,
   fillBots = false,
+  botCount = null,
+  settings: rawSettings = null,
   seed = 1,
   now = 0,
 } = {}) {
@@ -22,6 +25,7 @@ export function createMatch({
     throw new Error("createMatch wymaga co najmniej jednego gracza");
   }
 
+  const settings = normalizeSettings({ ...rawSettings, zone: zone || rawSettings?.zone });
   const box = { state: seed | 0 };
   const random = createRandom(box);
   const roster = humans.map((human) => ({
@@ -33,7 +37,10 @@ export function createMatch({
 
   if (fillBots) {
     let number = 1;
-    while (roster.length < SEAT_COUNT) {
+    const target = Number.isInteger(botCount)
+      ? Math.min(SEAT_COUNT, roster.length + Math.max(0, botCount))
+      : SEAT_COUNT;
+    while (roster.length < target) {
       while (roster.some((seat) => seat.id === `bot-${number}`)) {
         number += 1;
       }
@@ -61,7 +68,13 @@ export function createMatch({
   }
 
   const borders = createMapBorder(BOARD_SIZE);
-  const walls = generateMaze(BOARD_SIZE, boardAnchor(), random);
+  const walls = generateMaze(
+    BOARD_SIZE,
+    boardAnchor(),
+    random,
+    1,
+    settings.wallDensity,
+  );
   const positions = pickSpawnPositions(walls, borders, seats.length, PLAYER_START);
   const actors = seats.map((seat, index) => {
     const actor = createActor({
@@ -74,7 +87,7 @@ export function createMatch({
       nextMoveAt: 0,
     });
     if (seat.kind === "bot") {
-      actor.nextMoveAt = now + moveIntervalFor(actor, now);
+      actor.nextMoveAt = now + moveIntervalFor(actor, now, settings);
     }
     return actor;
   });
@@ -85,7 +98,8 @@ export function createMatch({
     startedAt: now,
     rng: box.state,
     nextId: 1,
-    zone: zone ? { startedAt: now } : null,
+    settings,
+    zone: zone || settings.zone ? { startedAt: now } : null,
     zoneSince: {},
     borders,
     walls,

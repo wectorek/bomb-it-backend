@@ -38,7 +38,13 @@ function wallType(random) {
   return "destructible";
 }
 
-export function generateMaze(size, start, random, inset = 1) {
+export function generateMaze(
+  size,
+  start,
+  random,
+  inset = 1,
+  wallDensity = 1,
+) {
   if (typeof random !== "function") {
     throw new Error("generateMaze wymaga generatora random");
   }
@@ -85,9 +91,34 @@ export function generateMaze(size, start, random, inset = 1) {
   carve(alignToLattice(start.row, min), alignToLattice(start.col, min));
   walls.delete(cellKey(start.row, start.col));
 
-  return [...walls].map((key) => {
+  if (wallDensity > 1) {
+    // Gęściej: dosadzamy bloki w wolnych polach, ale zostawiamy rogi dla graczy.
+    const extra = Math.min(1, (wallDensity - 1) * 0.5);
+    const reserve = 4;
+    for (let row = min; row < max; row += 1) {
+      for (let col = min; col < max; col += 1) {
+        const key = cellKey(row, col);
+        const nearCornerRow = row < min + reserve || row >= max - reserve;
+        const nearCornerCol = col < min + reserve || col >= max - reserve;
+        if (walls.has(key) || (nearCornerRow && nearCornerCol)) {
+          continue;
+        }
+        if (random() < extra) {
+          walls.add(key);
+        }
+      }
+    }
+  }
+
+  const kept =
+    wallDensity >= 1
+      ? [...walls]
+      : [...walls].filter(() => random() < wallDensity);
+
+  return kept.map((key) => {
     const [row, col] = key.split(",").map(Number);
-    return { row, col, type: wallType(random) };
+    const type = wallType(random);
+    return { row, col, type };
   });
 }
 
