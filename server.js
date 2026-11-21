@@ -141,7 +141,14 @@ function broadcast(room, now) {
     const body = room.state
       ? snapshot(room.state, { roomId: room.code, you: conn.you, now })
       : lobbySnapshot(room, conn.you, now);
-    send(conn, { type: "state", ...body });
+    send(conn, {
+      type: "state",
+      ...body,
+      host: room.hostId,
+      ready: [...room.ready],
+      fillBots: room.fillBots === true,
+      settings: room.settings,
+    });
   }
 }
 
@@ -196,14 +203,13 @@ function ensureTick(room) {
 }
 
 function beginMatch(room, now) {
-  const humans =
-    room.roster ??
-    room.seats.map((seat) => ({
-      id: seat.id,
-      kind: "player",
-      name: seat.name,
-      color: seat.color,
-    }));
+  const humans = room.seats.map((seat) => ({
+    id: seat.id,
+    kind: "player",
+    name: seat.name,
+    color: seat.color,
+  }));
+  room.ready.clear();
   room.round += 1;
   room.state = createMatch({
     zone: room.zone,
@@ -275,13 +281,43 @@ function claimYou(room, nick) {
   return addHuman(room, nick)?.id ?? null;
 }
 
+// Gracz, który wyszedł, znika z pokoju i z planszy. Host przechodzi na losowego gracza.
+function dropPlayer(room, id) {
+  const hadHumans = room.seats.length;
+  room.seats = room.seats.filter((seat) => seat.id !== id);
+  room.ready.delete(id);
+  if (room.state) {
+    const actors = room.state.actors.filter((actor) => actor.id !== id);
+    room.state = { ...room.state, actors };
+    if (room.state.status === "playing" && hadHumans >= 2) {
+      const humans = actors.filter((actor) => actor.kind === "player");
+      const bots = actors.filter((actor) => actor.kind === "bot");
+      if (humans.length === 1 && bots.length === 0) {
+        room.state = {
+          ...room.state,
+          status: "ended",
+          outcomes: { [humans[0].id]: "win" },
+        };
+        stopTick(room);
+      }
+    }
+  }
+  if (room.hostId === id) {
+    const connected = room.seats.filter((seat) =>
+      room.conns.some((conn) => conn.you === seat.id),
+    );
+    const pool = connected.length > 0 ? connected : room.seats;
+    room.hostId = pool.length
+      ? pool[randomInt(pool.length)].id
+      : null;
+  }
+}
+
 function removeConn(room, conn) {
   room.conns = room.conns.filter((item) => item !== conn);
-  if (!room.state) {
-    const stillThere = room.conns.some((item) => item.you === conn.you);
-    if (!stillThere) {
-      room.seats = room.seats.filter((seat) => seat.id !== conn.you);
-    }
+  const stillThere = room.conns.some((item) => item.you === conn.you);
+  if (!stillThere && conn.you) {
+    dropPlayer(room, conn.you);
   }
   if (room.conns.length === 0) {
     scheduleExpiry(room);
@@ -326,7 +362,7 @@ function leave(conn, now) {
   conn.you = null;
   conn.direction = null;
   conn.pendingAction = null;
-  if (!room.state && rooms.get(room.code) === room && room.conns.length > 0) {
+  if (rooms.get(room.code) === room && room.conns.length > 0) {
     broadcast(room, now);
   }
   return you;
@@ -347,6 +383,8 @@ function onCreate(conn, message, now) {
       ? Math.min(3, Math.max(1, message.botCount))
       : null,
     seats: [],
+    hostId: null,
+    ready: new Set(),
     nextSeat: 1,
     roster: null,
     state: null,
@@ -357,6 +395,7 @@ function onCreate(conn, message, now) {
   };
   rooms.set(code, room);
   const seat = addHuman(room, cleanNick(message.nick), message.color);
+  room.hostId = seat.id;
   bind(room, conn, seat.id);
   welcome(conn);
   if (message.fillBots === true && message.lobby !== true) {
@@ -385,14 +424,58 @@ function onJoin(conn, message, now) {
   broadcast(room, now);
 }
 
+function isHost(conn) {
+  return Boolean(conn.room) && conn.room.hostId === conn.you;
+}
+
+function betweenRounds(room) {
+  return !room.state || room.state.status !== "playing";
+}
+
 function onSettings(conn, message, now) {
   const room = conn.room;
-  if (!room || room.state || room.seats[0]?.id !== conn.you) {
+  if (!room || !isHost(conn) || !betweenRounds(room)) {
     return;
   }
   if (typeof message.fillBots === "boolean") {
     room.fillBots = message.fillBots;
   }
+  if (message.settings && typeof message.settings === "object") {
+    room.settings = normalizeSettings(message.settings);
+    room.zone = room.settings.zone;
+  }
+  broadcast(room, now);
+}
+
+function onReady(conn, message, now) {
+  const room = conn.room;
+  if (!room || !room.state || room.state.status === "playing") {
+    return;
+  }
+  if (!room.seats.some((seat) => seat.id === conn.you)) {
+    return;
+  }
+  if (message.ready === false) {
+    room.ready.delete(conn.you);
+  } else {
+    room.ready.add(conn.you);
+  }
+  broadcast(room, now);
+}
+
+function onTransferHost(conn, message, now) {
+  const room = conn.room;
+  if (!room || !isHost(conn)) {
+    return;
+  }
+  const target = room.seats.find(
+    (seat) =>
+      seat.id === message.to && room.conns.some((item) => item.you === seat.id),
+  );
+  if (!target) {
+    return;
+  }
+  room.hostId = target.id;
   broadcast(room, now);
 }
 
@@ -401,7 +484,20 @@ function onRestart(conn, now) {
     send(conn, { type: "error", message: "Najpierw wejdź do pokoju." });
     return;
   }
-  beginMatch(conn.room, now);
+  const room = conn.room;
+  if (!isHost(conn)) {
+    return;
+  }
+  if (room.state && room.state.status === "playing" && room.seats.length > 1) {
+    return;
+  }
+  if (room.state && room.state.status !== "playing") {
+    const others = room.seats.filter((seat) => seat.id !== room.hostId);
+    if (!others.every((seat) => room.ready.has(seat.id))) {
+      return;
+    }
+  }
+  beginMatch(room, now);
 }
 
 function onInput(conn, message) {
@@ -430,6 +526,10 @@ function handleMessage(conn, message, now) {
     onJoin(conn, message, now);
   } else if (message.type === "input") {
     onInput(conn, message);
+  } else if (message.type === "ready") {
+    onReady(conn, message, now);
+  } else if (message.type === "transferHost") {
+    onTransferHost(conn, message, now);
   } else if (message.type === "settings") {
     onSettings(conn, message, now);
   } else if (message.type === "restart" || message.type === "start") {
