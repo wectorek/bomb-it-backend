@@ -50,6 +50,7 @@ function bombView(bomb, state, now) {
     from: bomb.from ? { row: bomb.from.row, col: bomb.from.col } : null,
   };
   if (
+    state.status === "playing" &&
     !bomb.airborne &&
     typeof bomb.explodeAt === "number" &&
     bomb.explodeAt - now < BOMB_PREVIEW_MS &&

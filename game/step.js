@@ -44,6 +44,8 @@ import { applyZoneDamage, safeHalf } from "./zone.js";
 const FINALE_DROP_FALL_MS = 1200;
 const MESS_SLOW_MULTIPLIER = 2.5;
 const FINALE_DROP_EVERY_MS = 700;
+// Mecz od startu we dwójkę nie czyści areny od razu.
+const FINALE_DUEL_DELAY_MS = 30_000;
 
 function takeId(state) {
   const id = state.nextId;
@@ -498,11 +500,15 @@ export function step(state, inputs = [], now) {
     next.zoneSince = zoned.since;
   }
 
-  if (
-    !next.finale &&
-    typeof next.finaleStartsAt === "number" &&
-    now >= next.finaleStartsAt
-  ) {
+  const aliveCount = next.actors.filter((actor) => actor.alive).length;
+  const duelClock = next.countdownUntil ?? next.startedAt ?? now;
+  const duelReady =
+    next.settings?.finaleOnDuel === true &&
+    aliveCount === 2 &&
+    (next.startActors > 2 || now - duelClock >= FINALE_DUEL_DELAY_MS);
+  const timeReady =
+    typeof next.finaleStartsAt === "number" && now >= next.finaleStartsAt;
+  if (!next.finale && (timeReady || duelReady)) {
     next.finale = { startedAt: now };
     next.drops = [];
     next.mess = [];

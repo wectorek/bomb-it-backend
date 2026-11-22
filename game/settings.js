@@ -23,6 +23,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   zone: false,
   finale: false,
   finaleAfterSec: 0,
+  finaleOnDuel: false,
   mode: "classic",
   botDifficulty: "normal",
   zoneCellSec: 20,
@@ -85,10 +86,12 @@ export function normalizeSettings(raw) {
     enabledBonuses[id] = input.enabledBonuses?.[id] !== false;
   }
   const finaleAfterSec = finaleDelaySec(input, d);
+  const finaleOnDuel = input.finaleOnDuel === true;
   return {
     zone: input.zone === true,
-    finale: finaleAfterSec > 0,
+    finale: finaleAfterSec > 0 || finaleOnDuel,
     finaleAfterSec,
+    finaleOnDuel,
     mode: pickEnum(input.mode === "points" ? "classic" : input.mode, MODES, d.mode),
     botDifficulty: pickEnum(input.botDifficulty, BOT_LEVELS, d.botDifficulty),
     zoneCellSec: Math.round(num(input.zoneCellSec, d.zoneCellSec, 5, 60)),
